@@ -38,6 +38,7 @@ const subagentRegistryMock = {
   countPendingDescendantRuns: vi.fn((_sessionKey: string) => 0),
   countPendingDescendantRunsExcludingRun: vi.fn((_sessionKey: string, _runId: string) => 0),
   listSubagentRunsForRequester: vi.fn((_sessionKey: string) => []),
+  getSubagentRunById: vi.fn((_runId: string) => undefined),
   resolveRequesterForChildSession: vi.fn((_sessionKey: string): RequesterResolution => null),
 };
 const subagentDeliveryTargetHookMock = vi.fn(
@@ -200,6 +201,7 @@ describe("subagent announce formatting", () => {
         subagentRegistryMock.countPendingDescendantRuns(sessionKey),
       );
     subagentRegistryMock.listSubagentRunsForRequester.mockClear().mockReturnValue([]);
+    subagentRegistryMock.getSubagentRunById.mockClear().mockReturnValue(undefined);
     subagentRegistryMock.resolveRequesterForChildSession.mockClear().mockReturnValue(null);
     hasSubagentDeliveryTargetHook = false;
     hookRunnerMock.hasHooks.mockClear();
@@ -1582,44 +1584,48 @@ describe("subagent announce formatting", () => {
   });
 
   it("splits collect-mode queues when accountId differs", async () => {
-    embeddedRunMock.isEmbeddedPiRunActive.mockReturnValue(true);
-    embeddedRunMock.isEmbeddedPiRunStreaming.mockReturnValue(false);
-    sessionStore = {
-      "agent:main:main": {
-        sessionId: "session-acc-split",
-        lastChannel: "whatsapp",
-        lastTo: "+1555",
-        queueMode: "collect",
-        queueDebounceMs: 0,
-      },
-    };
+    vi.useFakeTimers();
+    try {
+      embeddedRunMock.isEmbeddedPiRunActive.mockReturnValue(true);
+      embeddedRunMock.isEmbeddedPiRunStreaming.mockReturnValue(false);
+      sessionStore = {
+        "agent:main:main": {
+          sessionId: "session-acc-split",
+          lastChannel: "whatsapp",
+          lastTo: "+1555",
+          queueMode: "collect",
+          queueDebounceMs: 0,
+        },
+      };
 
-    await Promise.all([
-      runSubagentAnnounceFlow({
+      const announceA = runSubagentAnnounceFlow({
         childSessionKey: "agent:main:subagent:test-a",
         childRunId: "run-a",
         requesterSessionKey: "main",
         requesterDisplayKey: "main",
         requesterOrigin: { accountId: "acct-a" },
         ...defaultOutcomeAnnounce,
-      }),
-      runSubagentAnnounceFlow({
+      });
+      const announceB = runSubagentAnnounceFlow({
         childSessionKey: "agent:main:subagent:test-b",
         childRunId: "run-b",
         requesterSessionKey: "main",
         requesterDisplayKey: "main",
         requesterOrigin: { accountId: "acct-b" },
         ...defaultOutcomeAnnounce,
-      }),
-    ]);
+      });
 
-    await vi.waitFor(() => {
+      await vi.runAllTimersAsync();
+      await Promise.all([announceA, announceB]);
+
       expect(agentSpy).toHaveBeenCalledTimes(2);
-    });
-    const accountIds = agentSpy.mock.calls.map(
-      (call) => (call?.[0] as { params?: { accountId?: string } })?.params?.accountId,
-    );
-    expect(accountIds).toEqual(expect.arrayContaining(["acct-a", "acct-b"]));
+      const accountIds = agentSpy.mock.calls.map(
+        (call) => (call?.[0] as { params?: { accountId?: string } })?.params?.accountId,
+      );
+      expect(accountIds).toEqual(expect.arrayContaining(["acct-a", "acct-b"]));
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it.each([
@@ -1961,6 +1967,104 @@ describe("subagent announce formatting", () => {
     expect(msg).toContain("result from child a");
     expect(msg).toContain("result from child b");
     expect(msg).not.toContain("placeholder waiting text that should be ignored");
+  });
+
+  it("scopes synthesized child completion results to the active parent run and keeps tie ordering deterministic", async () => {
+    const parentSessionKey = "agent:main:subagent:parent-scoped";
+    subagentRegistryMock.countPendingDescendantRuns.mockReturnValue(0);
+    subagentRegistryMock.getSubagentRunById.mockImplementation((runId: string) =>
+      runId === "run-parent-current"
+        ? {
+            runId,
+            childSessionKey: parentSessionKey,
+            requesterSessionKey: "agent:main:main",
+            requesterDisplayKey: "main",
+            task: "parent run",
+            cleanup: "keep",
+            createdAt: 100,
+            endedAt: 200,
+          }
+        : undefined,
+    );
+    subagentRegistryMock.listSubagentRunsForRequester.mockImplementation((sessionKey: string) =>
+      sessionKey === parentSessionKey
+        ? [
+            {
+              runId: "run-old-child",
+              childSessionKey: `${parentSessionKey}:subagent:old`,
+              requesterSessionKey: parentSessionKey,
+              requesterDisplayKey: "parent",
+              task: "old child",
+              cleanup: "keep",
+              createdAt: 90,
+              endedAt: 95,
+              cleanupCompletedAt: 96,
+              frozenResultText: "stale prior turn output",
+              outcome: { status: "ok" },
+            },
+            {
+              runId: "run-child-b",
+              childSessionKey: `${parentSessionKey}:subagent:b`,
+              requesterSessionKey: parentSessionKey,
+              requesterDisplayKey: "parent",
+              task: "child b",
+              cleanup: "keep",
+              createdAt: 150,
+              endedAt: 180,
+              cleanupCompletedAt: 181,
+              frozenResultText: "result b",
+              outcome: { status: "ok" },
+            },
+            {
+              runId: "run-child-a-2",
+              childSessionKey: `${parentSessionKey}:subagent:a`,
+              requesterSessionKey: parentSessionKey,
+              requesterDisplayKey: "parent",
+              task: "child a followup",
+              cleanup: "keep",
+              createdAt: 150,
+              endedAt: 180,
+              cleanupCompletedAt: 181,
+              frozenResultText: "result a2",
+              outcome: { status: "ok" },
+            },
+            {
+              runId: "run-child-a-1",
+              childSessionKey: `${parentSessionKey}:subagent:a`,
+              requesterSessionKey: parentSessionKey,
+              requesterDisplayKey: "parent",
+              task: "child a",
+              cleanup: "keep",
+              createdAt: 150,
+              endedAt: 180,
+              cleanupCompletedAt: 181,
+              frozenResultText: "result a1",
+              outcome: { status: "ok" },
+            },
+          ]
+        : [],
+    );
+
+    const didAnnounce = await runSubagentAnnounceFlow({
+      childSessionKey: parentSessionKey,
+      childRunId: "run-parent-current",
+      requesterSessionKey: "agent:main:main",
+      requesterDisplayKey: "main",
+      ...defaultOutcomeAnnounce,
+      expectsCompletionMessage: true,
+      roundOneReply: "fallback that should be ignored",
+    });
+
+    expect(didAnnounce).toBe(true);
+    const call = agentSpy.mock.calls[0]?.[0] as { params?: { message?: string } };
+    const message = call?.params?.message ?? "";
+    expect(message).toContain("result a1");
+    expect(message).toContain("result a2");
+    expect(message).toContain("result b");
+    expect(message).not.toContain("stale prior turn output");
+
+    expect(message.indexOf("result a1")).toBeLessThan(message.indexOf("result a2"));
+    expect(message.indexOf("result a2")).toBeLessThan(message.indexOf("result b"));
   });
 
   it("nested completion chains re-check child then parent deterministically", async () => {

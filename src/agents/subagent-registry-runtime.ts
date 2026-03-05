@@ -2,6 +2,7 @@ export {
   countActiveDescendantRuns,
   countPendingDescendantRuns,
   countPendingDescendantRunsExcludingRun,
+  getSubagentRunById,
   isSubagentSessionRunActive,
   listSubagentRunsForRequester,
   resolveRequesterForChildSession,

@@ -176,12 +176,10 @@ describe("subagent registry lifecycle error grace", () => {
     const firstCall = announceSpy.mock.calls[0]?.[0] as { roundOneReply?: string } | undefined;
     expect(firstCall?.roundOneReply).toBe("Final answer X");
 
-    await vi.waitFor(() => {
-      const run = mod
-        .listSubagentRunsForRequester(MAIN_REQUESTER_SESSION_KEY)
-        .find((candidate) => candidate.runId === "run-freeze");
-      expect(run?.cleanupHandled).toBe(false);
-    });
+    const runAfterFirstAttempt = mod
+      .listSubagentRunsForRequester(MAIN_REQUESTER_SESSION_KEY)
+      .find((candidate) => candidate.runId === "run-freeze");
+    expect(runAfterFirstAttempt?.cleanupHandled).toBe(false);
 
     captureCompletionReplySpy.mockResolvedValueOnce("Late reply Y");
     emitLifecycleEvent("run-freeze", { phase: "end", endedAt: endedAt + 100 });
@@ -212,13 +210,15 @@ describe("subagent registry lifecycle error grace", () => {
     await flushAsync();
 
     expect(announceSpy).toHaveBeenCalledTimes(2);
-    await vi.waitFor(() => {
-      const runs = mod.listSubagentRunsForRequester(MAIN_REQUESTER_SESSION_KEY);
-      const runA = runs.find((candidate) => candidate.runId === "run-parallel-a");
-      const runB = runs.find((candidate) => candidate.runId === "run-parallel-b");
-      expect(runA?.cleanupHandled).toBe(false);
-      expect(runB?.cleanupHandled).toBe(false);
-    });
+    const runsAfterFirstAttempt = mod.listSubagentRunsForRequester(MAIN_REQUESTER_SESSION_KEY);
+    const runAfterFirstAttemptA = runsAfterFirstAttempt.find(
+      (candidate) => candidate.runId === "run-parallel-a",
+    );
+    const runAfterFirstAttemptB = runsAfterFirstAttempt.find(
+      (candidate) => candidate.runId === "run-parallel-b",
+    );
+    expect(runAfterFirstAttemptA?.cleanupHandled).toBe(false);
+    expect(runAfterFirstAttemptB?.cleanupHandled).toBe(false);
 
     captureCompletionReplySpy.mockResolvedValue("Late overwrite");
 

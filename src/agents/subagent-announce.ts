@@ -345,6 +345,7 @@ function describeSubagentOutcome(outcome?: SubagentRunOutcome): string {
 
 function buildChildCompletionFindings(
   children: Array<{
+    runId: string;
     childSessionKey: string;
     task: string;
     label?: string;
@@ -360,7 +361,14 @@ function buildChildCompletionFindings(
     }
     const aEnded = typeof a.endedAt === "number" ? a.endedAt : Number.MAX_SAFE_INTEGER;
     const bEnded = typeof b.endedAt === "number" ? b.endedAt : Number.MAX_SAFE_INTEGER;
-    return aEnded - bEnded;
+    if (aEnded !== bEnded) {
+      return aEnded - bEnded;
+    }
+    const childSessionCmp = a.childSessionKey.localeCompare(b.childSessionKey);
+    if (childSessionCmp !== 0) {
+      return childSessionCmp;
+    }
+    return a.runId.localeCompare(b.runId);
   });
 
   const sections: string[] = [];
@@ -1160,7 +1168,7 @@ export async function runSubagentAnnounceFlow(params: {
     let pendingChildDescendantRuns = 0;
     let childCompletionFindings: string | undefined;
     try {
-      const { countPendingDescendantRuns, listSubagentRunsForRequester } =
+      const { countPendingDescendantRuns, listSubagentRunsForRequester, getSubagentRunById } =
         await loadSubagentRegistryRuntime();
       pendingChildDescendantRuns = Math.max(0, countPendingDescendantRuns(params.childSessionKey));
       if (pendingChildDescendantRuns > 0) {
@@ -1173,9 +1181,41 @@ export async function runSubagentAnnounceFlow(params: {
 
       if (typeof listSubagentRunsForRequester === "function") {
         const directChildren = listSubagentRunsForRequester(params.childSessionKey);
-        if (Array.isArray(directChildren) && directChildren.length > 0) {
+        const currentRun =
+          typeof getSubagentRunById === "function"
+            ? getSubagentRunById(params.childRunId)
+            : undefined;
+        const minCreatedAt =
+          typeof currentRun?.createdAt === "number"
+            ? currentRun.createdAt
+            : typeof params.startedAt === "number"
+              ? params.startedAt
+              : undefined;
+        const maxCreatedAt =
+          typeof currentRun?.endedAt === "number"
+            ? currentRun.endedAt
+            : typeof params.endedAt === "number"
+              ? params.endedAt
+              : undefined;
+
+        const scopedChildren =
+          Array.isArray(directChildren) &&
+          (typeof minCreatedAt === "number" || typeof maxCreatedAt === "number")
+            ? directChildren.filter((child) => {
+                if (typeof minCreatedAt === "number" && child.createdAt < minCreatedAt) {
+                  return false;
+                }
+                if (typeof maxCreatedAt === "number" && child.createdAt > maxCreatedAt) {
+                  return false;
+                }
+                return true;
+              })
+            : directChildren;
+
+        if (Array.isArray(scopedChildren) && scopedChildren.length > 0) {
           childCompletionFindings = buildChildCompletionFindings(
-            directChildren.map((child) => ({
+            scopedChildren.map((child) => ({
+              runId: child.runId,
               childSessionKey: child.childSessionKey,
               task: child.task,
               label: child.label,

@@ -55,6 +55,7 @@ vi.mock("./subagent-registry.js", () => ({
   countActiveDescendantRuns: () => 0,
   countPendingDescendantRuns: () => 0,
   listSubagentRunsForRequester: () => [],
+  getSubagentRunById: () => undefined,
   isSubagentSessionRunActive: () => true,
   resolveRequesterForChildSession: () => null,
 }));

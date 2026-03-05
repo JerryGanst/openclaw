@@ -1249,6 +1249,15 @@ export function listSubagentRunsForRequester(requesterSessionKey: string): Subag
   return listRunsForRequesterFromRuns(subagentRuns, requesterSessionKey);
 }
 
+export function getSubagentRunById(runId: string): SubagentRunRecord | undefined {
+  const key = runId.trim();
+  if (!key) {
+    return undefined;
+  }
+  const entry = subagentRuns.get(key);
+  return entry ? { ...entry } : undefined;
+}
+
 export function countActiveRunsForSession(requesterSessionKey: string): number {
   return countActiveRunsForSessionFromRuns(
     getSubagentRunsSnapshotForRead(subagentRuns),

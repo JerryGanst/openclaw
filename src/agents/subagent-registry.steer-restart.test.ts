@@ -346,6 +346,30 @@ describe("subagent registry steer restarts", () => {
     expect(run.lastAnnounceRetryAt).toBeUndefined();
   });
 
+  it("clears frozen completion state when replacing after steer restart", () => {
+    registerRun({
+      runId: "run-frozen-state-old",
+      childSessionKey: "agent:main:subagent:frozen-state",
+      task: "frozen state",
+    });
+
+    const previous = listMainRuns()[0];
+    expect(previous?.runId).toBe("run-frozen-state-old");
+    if (previous) {
+      previous.frozenResultText = "old frozen output";
+      previous.frozenResultCapturedAt = Date.now();
+    }
+
+    const run = replaceRunAfterSteer({
+      previousRunId: "run-frozen-state-old",
+      nextRunId: "run-frozen-state-new",
+      fallback: previous,
+    });
+
+    expect(run.frozenResultText).toBeUndefined();
+    expect(run.frozenResultCapturedAt).toBeUndefined();
+  });
+
   it("clears terminal lifecycle state when replacing after steer restart", async () => {
     registerRun({
       runId: "run-terminal-state-old",
